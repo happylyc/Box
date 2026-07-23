@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.base;
 
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
@@ -10,11 +11,15 @@ import android.graphics.drawable.BitmapDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
+import android.text.InputType;
 import android.util.DisplayMetrics;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.EditText;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.PermissionChecker;
 import com.blankj.utilcode.util.ActivityUtils;
@@ -98,9 +103,71 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         }
 
         super.onCreate(savedInstanceState);
+
+        // ================= Password Lock Start =================
+        if (this instanceof com.github.tvbox.osc.ui.activity.HomeActivity) {
+            boolean isReHome = false;
+            if (getIntent() != null && getIntent().getExtras() != null) {
+                isReHome = getIntent().getExtras().getBoolean("useCache", false);
+            }
+
+            long lastVerify = Hawk.get("password_last_verify", 0L);
+            boolean isVerified = (System.currentTimeMillis() - lastVerify) < 0;
+
+            if (!isVerified && !isReHome) {
+                final String CORRECT_PASSWORD = "123456";
+                final EditText input = new EditText(this);
+                input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+
+                final AlertDialog dialog = new AlertDialog.Builder(this)
+                        .setTitle(R.string.app_name)
+                        .setMessage("Enter password to continue")
+                        .setView(input)
+                        .setCancelable(false)
+                        .setPositiveButton("OK", null)
+                        .setNegativeButton("Exit", new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface d, int which) {
+                                finish();
+                                android.os.Process.killProcess(android.os.Process.myPid());
+                            }
+                        })
+                        .create();
+
+                dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+                    @Override
+                    public void onShow(DialogInterface d) {
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View v) {
+                                String pwd = input.getText().toString().trim();
+                                if (CORRECT_PASSWORD.equals(pwd)) {
+                                    Hawk.put("password_last_verify", System.currentTimeMillis());
+                                    dialog.dismiss();
+                                    // Continue normal flow
+                                    continueOnCreate();
+                                } else {
+                                    Toast.makeText(BaseActivity.this, "Wrong password", Toast.LENGTH_SHORT).show();
+                                    input.setText("");
+                                }
+                            }
+                        });
+                    }
+                });
+
+                dialog.show();
+                return;
+            }
+        }
+        // ================= Password Lock End =================
+
+        continueOnCreate();
+    }
+
+    private void continueOnCreate() {
         setContentView(getLayoutResID());
         mContext = this;
-        CutoutUtil.adaptCutoutAboveAndroidP(mContext, true);//设置刘海
+        CutoutUtil.adaptCutoutAboveAndroidP(mContext, true);
         AppManager.getInstance().addActivity(this);
         init();
         setScreenOn();
@@ -252,7 +319,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     }
 
     public void jumpActivity(Class<? extends BaseActivity> clazz, Bundle bundle) {
-    	if (DetailActivity.class.isAssignableFrom(clazz) && Hawk.get(HawkConfig.BACKGROUND_PLAY_TYPE, 0) == 2) {
+        if (DetailActivity.class.isAssignableFrom(clazz) && Hawk.get(HawkConfig.BACKGROUND_PLAY_TYPE, 0) == 2) {
             //1.重新打开singleTask的页面(关闭小窗) 2.关闭画中画，重进detail再开启画中画会闪退
             ActivityUtils.finishActivity(DetailActivity.class);
         }
@@ -354,4 +421,4 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             getWindow().setBackgroundDrawableResource(R.drawable.app_bg);
         }
     }
-}
+    }
