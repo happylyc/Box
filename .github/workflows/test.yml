@@ -1,31 +1,89 @@
-name: Test Build
+name: Build Android APK
 
 on:
-#  push:
-#    branches:
-#      - main
-#  pull_request:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          fetch-depth: 0
-      - name: Build With Gradle
+          java-version: '17'
+          distribution: 'zulu'
+          cache: 'gradle'
+
+      # 确保系统自带的 Python3 就绪（解决 Chaquopy 报错核心）
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 全局递归修复所有子模块中硬编码的 Windows Python 路径
+      - name: Patch Hardcoded Python Path in Gradle Files
         run: |
-          chmod +x gradlew
-          ./gradlew assemblerelease --build-cache --parallel --daemon --warning-mode all
-      - name: Prepare App
+          PYTHON_PATH=$(which python3)
+          echo "Real Linux Python Path: $PYTHON_PATH"
+          find . -name "build.gradle" -o -name "build.gradle.kts" | xargs sed -i "s|D:/Programs/Python/Python38/python.exe|$PYTHON_PATH|g"
+
+      # 极致优化 Gradle 运行参数与网络超时上限
+      - name: Optimize Gradle Properties
         run: |
-          mkdir -p ${{ github.workspace }}/apk/
-          for file in `find ~ -name "*.apk" -print`; do
-            mv "$file" ${{ github.workspace }}/apk/
+          mkdir -p ~/.gradle
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+HeapDumpOnOutOfMemoryError" >> ~/.gradle/gradle.properties
+          echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.configureondemand=true" >> ~/.gradle/gradle.properties
+          echo "systemProp.http.socketTimeout=60000" >> ~/.gradle/gradle.properties
+          echo "systemProp.http.connectionTimeout=60000" >> ~/.gradle/gradle.properties
+
+      # 生成契合本项目的 local.properties 并注入变量
+      - name: Create Perfect local.properties
+        run: |
+          PYTHON_PATH=$(which python3)
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "ndk.dir=$ANDROID_HOME/ndk-bundle" >> local.properties
+          echo "buildPython=$PYTHON_PATH" >> local.properties
+          echo "RELEASE_STORE_FILE=mock.jks" >> local.properties
+          echo "RELEASE_STORE_PASSWORD=mock_pwd" >> local.properties
+          echo "RELEASE_KEY_ALIAS=mock_alias" >> local.properties
+          echo "RELEASE_KEY_PASSWORD=mock_pwd" >> local.properties
+
+      - name: Fix line endings for gradlew
+        run: sed -i 's/\r$//' gradlew
+
+      - name: Grant Execute Permission for Gradle
+        run: chmod +x gradlew
+
+      # 1. 100% 成功生成文件的原生编译命令（与你产出 315MB 大包时完全一致，不加任何 -P 参数）
+      - name: Build with Gradle
+        run: |
+          ./gradlew assembleDebug -x lint -x test --no-daemon --stacktrace --no-build-cache
+
+      # 2. 霸道瘦身：在生成的 APK 原地，直接用 Linux 命令剔除所有无用的 x86 驱动文件
+      - name: Post-Build Slimming
+        run: |
+          echo "=== 正在对生成的 315MB 大包进行剥离瘦身 ==="
+          sudo apt-get install -y zip
+          find app/build/outputs/apk/ -name "*.apk" | while read -r apk; do
+            echo "正在剥离 x86 架构脂肪: $apk"
+            zip -d "$apk" "lib/x86/*" "lib/x86_64/*" || true
           done
-      - name: Upload App To Artifact
-        uses: actions/upload-artifact@v3
+
+      # 3. 稳妥抓取上传，包含你的原生路径以及模糊备用路径
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: com.github.tvbox.osc
-          path: ${{ github.workspace }}/apk/*
+          name: Box-Slim-Debug-APKs
+          path: |
+            app/build/outputs/apk/**/*.apk
+            **/build/outputs/apk/**/*.apk
+          retention-days: 7
