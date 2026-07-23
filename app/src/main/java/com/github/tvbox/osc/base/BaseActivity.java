@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.base;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.AssetManager;
@@ -10,9 +11,17 @@ import android.graphics.drawable.BitmapDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
+import android.text.InputType;
 import android.util.DisplayMetrics;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
@@ -50,6 +59,12 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     private LoadService mLoadService;
 
     private static float screenRatio = -100.0f;
+
+    // ================= 🔑 密码锁配置 =================
+    private static final String CORRECT_PASSWORD = "123456"; // 👈 修改你的密码
+    private static final String HAWK_KEY_VERIFY_TIME = "password_last_verify";
+    private static final long VERIFY_TIMEOUT_MS = 0; // 0 = 每次启动都需验证；改为 300000 = 5分钟内免验证
+    // ================= 🔑 密码锁配置结束 =================
 
     // takagen99 : Fix for Locale change not persist on higher Android version
     @Override
@@ -97,6 +112,26 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             setTheme(R.style.SakuraTheme);
         }
 
+        // ================= 🔑 启动密码锁开始 =================
+        // 只对 HomeActivity 生效，且排除 reHome/reloadHome 跳转（带 useCache=true）
+        if (this instanceof com.github.tvbox.osc.ui.activity.HomeActivity) {
+            boolean isReHome = false;
+            if (getIntent() != null && getIntent().getExtras() != null) {
+                isReHome = getIntent().getExtras().getBoolean("useCache", false);
+            }
+
+            // 检查是否已验证（Hawk 存储时间戳）
+            long lastVerify = Hawk.get(HAWK_KEY_VERIFY_TIME, 0L);
+            boolean isVerified = (System.currentTimeMillis() - lastVerify) < VERIFY_TIMEOUT_MS;
+
+            if (!isVerified && !isReHome) {
+                super.onCreate(savedInstanceState);
+                showPasswordLockScreen();
+                return; // 🔴 阻断！不执行 setContentView(getLayoutResID()) 和 init()
+            }
+        }
+        // ================= 🔑 启动密码锁结束 =================
+
         super.onCreate(savedInstanceState);
         setContentView(getLayoutResID());
         mContext = this;
@@ -105,6 +140,118 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         init();
         setScreenOn();
     }
+
+    // ================= 🔑 密码锁辅助方法 =================
+    private void showPasswordLockScreen() {
+        // 全屏深色背景，完全不加载主页布局
+        FrameLayout root = new FrameLayout(this);
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        root.setBackgroundColor(0xFF1a1a2e);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT);
+        container.setLayoutParams(cp);
+
+        // 标题
+        TextView title = new TextView(this);
+        title.setText("身份验证");
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(28);
+        title.setPadding(0, 0, 0, 20);
+        container.addView(title);
+
+        // 提示
+        TextView msg = new TextView(this);
+        msg.setText("请输入安全密码以开启应用");
+        msg.setTextColor(0xFFAAAAAA);
+        msg.setTextSize(16);
+        msg.setPadding(0, 0, 0, 40);
+        container.addView(msg);
+
+        // 密码输入框
+        final EditText input = new EditText(this);
+        input.setHint("密码");
+        input.setTextColor(0xFFFFFFFF);
+        input.setHintTextColor(0xFF888888);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setGravity(Gravity.CENTER);
+        input.setBackgroundColor(0xFF2a2a4e);
+        input.setPadding(40, 25, 40, 25);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(600, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ip.setMargins(100, 0, 100, 10);
+        input.setLayoutParams(ip);
+        container.addView(input);
+
+        // 错误提示（初始隐藏）
+        final TextView errorMsg = new TextView(this);
+        errorMsg.setText("");
+        errorMsg.setTextColor(0xFFFF4444);
+        errorMsg.setTextSize(14);
+        errorMsg.setPadding(0, 5, 0, 5);
+        container.addView(errorMsg);
+
+        // 确定按钮
+        Button confirmBtn = new Button(this);
+        confirmBtn.setText("确定");
+        confirmBtn.setTextColor(0xFFFFFFFF);
+        confirmBtn.setBackgroundColor(0xFFe94560);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(400, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bp.setMargins(0, 20, 0, 0);
+        confirmBtn.setLayoutParams(bp);
+        container.addView(confirmBtn);
+
+        // 退出按钮
+        Button exitBtn = new Button(this);
+        exitBtn.setText("退出");
+        exitBtn.setTextColor(0xFFCCCCCC);
+        exitBtn.setBackgroundColor(0xFF444444);
+        LinearLayout.LayoutParams bp2 = new LinearLayout.LayoutParams(400, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bp2.setMargins(0, 15, 0, 0);
+        exitBtn.setLayoutParams(bp2);
+        container.addView(exitBtn);
+
+        root.addView(container);
+        setContentView(root);
+
+        final Activity activity = this;
+
+        // 确定按钮点击
+        confirmBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String pwd = input.getText().toString().trim();
+                if (CORRECT_PASSWORD.equals(pwd)) {
+                    // 验证通过，记录时间戳
+                    Hawk.put(HAWK_KEY_VERIFY_TIME, System.currentTimeMillis());
+                    // 重新启动 HomeActivity，跳过密码锁
+                    Intent intent = new Intent(activity, com.github.tvbox.osc.ui.activity.HomeActivity.class);
+                    intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                    activity.finish();
+                } else {
+                    errorMsg.setText("密码错误，请重新输入");
+                    input.setText("");
+                    input.requestFocus();
+                }
+            }
+        });
+
+        // 退出按钮点击
+        exitBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                activity.finish();
+                android.os.Process.killProcess(android.os.Process.myPid());
+            }
+        });
+    }
+    // ================= 🔑 密码锁辅助方法结束 =================
 
     @Override
     protected void onResume() {
@@ -127,7 +274,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     }
 
     public void hideSysBar() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+        if (Build.VERSION.SDK_INT >=.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             int uiOptions = getWindow().getDecorView().getSystemUiVisibility();
             uiOptions |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
             //    uiOptions |= View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
