@@ -106,25 +106,6 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             setTheme(R.style.SakuraTheme);
         }
 
-        // ================= Password Lock Start =================
-        boolean needLock = false;
-        if (this instanceof com.github.tvbox.osc.ui.activity.HomeActivity) {
-            boolean isReHome = false;
-            if (getIntent() != null && getIntent().getExtras() != null) {
-                isReHome = getIntent().getExtras().getBoolean("useCache", false);
-            }
-            long lastVerify = Hawk.get("password_last_verify", 0L);
-            boolean isVerified = (System.currentTimeMillis() - lastVerify) < 0;
-            needLock = !isVerified && !isReHome;
-        }
-
-        if (needLock) {
-            super.onCreate(savedInstanceState);
-            showLockScreen();
-            return;
-        }
-        // ================= Password Lock End =================
-
         super.onCreate(savedInstanceState);
         setContentView(getLayoutResID());
         mContext = this;
@@ -132,16 +113,34 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         AppManager.getInstance().addActivity(this);
         init();
         setScreenOn();
+
+        // ================= Password Lock Start =================
+        // Normal init completes first, then overlay lock screen on top
+        if (this instanceof com.github.tvbox.osc.ui.activity.HomeActivity) {
+            boolean isReHome = false;
+            if (getIntent() != null && getIntent().getExtras() != null) {
+                isReHome = getIntent().getExtras().getBoolean("useCache", false);
+            }
+            long lastVerify = Hawk.get("password_last_verify", 0L);
+            boolean isVerified = (System.currentTimeMillis() - lastVerify) < 0;
+
+            if (!isVerified && !isReHome) {
+                showLockOverlay();
+            }
+        }
+        // ================= Password Lock End =================
     }
 
-    private void showLockScreen() {
+    private void showLockOverlay() {
         final String CORRECT_PASSWORD = "123456";
+        final BaseActivity self = this;
 
-        FrameLayout root = new FrameLayout(this);
-        root.setLayoutParams(new ViewGroup.LayoutParams(
+        // Fullscreen black overlay
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
-        root.setBackgroundColor(0xFF000000);
+        overlay.setBackgroundColor(0xFF000000);
 
         LinearLayout container = new LinearLayout(this);
         container.setOrientation(LinearLayout.VERTICAL);
@@ -203,10 +202,11 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         exitBtn.setLayoutParams(bp2);
         container.addView(exitBtn);
 
-        root.addView(container);
-        setContentView(root);
+        overlay.addView(container);
 
-        final BaseActivity self = this;
+        // Add overlay to window root
+        final ViewGroup rootView = findViewById(android.R.id.content);
+        rootView.addView(overlay);
 
         confirmBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -214,10 +214,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
                 String pwd = input.getText().toString().trim();
                 if (CORRECT_PASSWORD.equals(pwd)) {
                     Hawk.put("password_last_verify", System.currentTimeMillis());
-                    Intent intent = new Intent(self, com.github.tvbox.osc.ui.activity.HomeActivity.class);
-                    intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(intent);
-                    finish();
+                    rootView.removeView(overlay);
                 } else {
                     errorMsg.setText("Wrong password, try again");
                     input.setText("");
@@ -483,4 +480,4 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             getWindow().setBackgroundDrawableResource(R.drawable.app_bg);
         }
     }
-                }
+}
