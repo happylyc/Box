@@ -1,7 +1,6 @@
 package com.github.tvbox.osc.base;
 
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
@@ -13,13 +12,17 @@ import android.os.Bundle;
 import android.os.Looper;
 import android.text.InputType;
 import android.util.DisplayMetrics;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.PermissionChecker;
 import com.blankj.utilcode.util.ActivityUtils;
@@ -102,75 +105,133 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             setTheme(R.style.SakuraTheme);
         }
 
-        super.onCreate(savedInstanceState);
-
         // ================= Password Lock Start =================
+        boolean needLock = false;
         if (this instanceof com.github.tvbox.osc.ui.activity.HomeActivity) {
             boolean isReHome = false;
             if (getIntent() != null && getIntent().getExtras() != null) {
                 isReHome = getIntent().getExtras().getBoolean("useCache", false);
             }
-
             long lastVerify = Hawk.get("password_last_verify", 0L);
             boolean isVerified = (System.currentTimeMillis() - lastVerify) < 0;
+            needLock = !isVerified && !isReHome;
+        }
 
-            if (!isVerified && !isReHome) {
-                final String CORRECT_PASSWORD = "123456";
-                final EditText input = new EditText(this);
-                input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-
-                final AlertDialog dialog = new AlertDialog.Builder(this)
-                        .setTitle(R.string.app_name)
-                        .setMessage("Enter password to continue")
-                        .setView(input)
-                        .setCancelable(false)
-                        .setPositiveButton("OK", null)
-                        .setNegativeButton("Exit", new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface d, int which) {
-                                finish();
-                                android.os.Process.killProcess(android.os.Process.myPid());
-                            }
-                        })
-                        .create();
-
-                dialog.setOnShowListener(new DialogInterface.OnShowListener() {
-                    @Override
-                    public void onShow(DialogInterface d) {
-                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
-                            @Override
-                            public void onClick(View v) {
-                                String pwd = input.getText().toString().trim();
-                                if (CORRECT_PASSWORD.equals(pwd)) {
-                                    Hawk.put("password_last_verify", System.currentTimeMillis());
-                                    dialog.dismiss();
-                                    // Continue normal flow
-                                    continueOnCreate();
-                                } else {
-                                    Toast.makeText(BaseActivity.this, "Wrong password", Toast.LENGTH_SHORT).show();
-                                    input.setText("");
-                                }
-                            }
-                        });
-                    }
-                });
-
-                dialog.show();
-                return;
-            }
+        if (needLock) {
+            super.onCreate(savedInstanceState);
+            showLockScreen();
+            return;
         }
         // ================= Password Lock End =================
 
-        continueOnCreate();
-    }
-
-    private void continueOnCreate() {
+        super.onCreate(savedInstanceState);
         setContentView(getLayoutResID());
         mContext = this;
         CutoutUtil.adaptCutoutAboveAndroidP(mContext, true);
         AppManager.getInstance().addActivity(this);
         init();
         setScreenOn();
+    }
+
+    private void showLockScreen() {
+        final String CORRECT_PASSWORD = "123456";
+
+        FrameLayout root = new FrameLayout(this);
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        root.setBackgroundColor(0xFF000000);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+        container.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT);
+        container.setLayoutParams(cp);
+
+        TextView title = new TextView(this);
+        title.setText(R.string.app_name);
+        title.setTextColor(0xFFFFFFFF);
+        title.setTextSize(32);
+        title.setPadding(0, 0, 0, 30);
+        container.addView(title);
+
+        TextView msg = new TextView(this);
+        msg.setText("Enter password to continue");
+        msg.setTextColor(0xFFAAAAAA);
+        msg.setTextSize(16);
+        msg.setPadding(0, 0, 0, 40);
+        container.addView(msg);
+
+        final EditText input = new EditText(this);
+        input.setHint("Password");
+        input.setTextColor(0xFFFFFFFF);
+        input.setHintTextColor(0xFF888888);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        input.setGravity(Gravity.CENTER);
+        input.setBackgroundColor(0xFF333333);
+        input.setPadding(40, 25, 40, 25);
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(600, LinearLayout.LayoutParams.WRAP_CONTENT);
+        ip.setMargins(100, 0, 100, 10);
+        input.setLayoutParams(ip);
+        container.addView(input);
+
+        final TextView errorMsg = new TextView(this);
+        errorMsg.setText("");
+        errorMsg.setTextColor(0xFFFF4444);
+        errorMsg.setTextSize(14);
+        errorMsg.setPadding(0, 5, 0, 5);
+        container.addView(errorMsg);
+
+        Button confirmBtn = new Button(this);
+        confirmBtn.setText("OK");
+        confirmBtn.setTextColor(0xFFFFFFFF);
+        confirmBtn.setBackgroundColor(0xFFe94560);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(400, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bp.setMargins(0, 20, 0, 0);
+        confirmBtn.setLayoutParams(bp);
+        container.addView(confirmBtn);
+
+        Button exitBtn = new Button(this);
+        exitBtn.setText("Exit");
+        exitBtn.setTextColor(0xFFCCCCCC);
+        exitBtn.setBackgroundColor(0xFF444444);
+        LinearLayout.LayoutParams bp2 = new LinearLayout.LayoutParams(400, LinearLayout.LayoutParams.WRAP_CONTENT);
+        bp2.setMargins(0, 15, 0, 0);
+        exitBtn.setLayoutParams(bp2);
+        container.addView(exitBtn);
+
+        root.addView(container);
+        setContentView(root);
+
+        final BaseActivity self = this;
+
+        confirmBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String pwd = input.getText().toString().trim();
+                if (CORRECT_PASSWORD.equals(pwd)) {
+                    Hawk.put("password_last_verify", System.currentTimeMillis());
+                    Intent intent = new Intent(self, com.github.tvbox.osc.ui.activity.HomeActivity.class);
+                    intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                    finish();
+                } else {
+                    errorMsg.setText("Wrong password, try again");
+                    input.setText("");
+                    input.requestFocus();
+                }
+            }
+        });
+
+        exitBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+                android.os.Process.killProcess(android.os.Process.myPid());
+            }
+        });
     }
 
     @Override
@@ -421,4 +482,4 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             getWindow().setBackgroundDrawableResource(R.drawable.app_bg);
         }
     }
-    }
+}
